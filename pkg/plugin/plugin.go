@@ -24,6 +24,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/containernetworking/cni/pkg/version"
 	"log"
 	"net"
 	"runtime"
@@ -461,6 +462,55 @@ func CmdDel(args *skel.CmdArgs) error {
 
 func CmdCheck(args *skel.CmdArgs) error {
 	logCall("CHECK", args)
-	log.Print("CHECK is not yet implemented, pretending everything is fine")
+
+	conf, err := loadNetConf(args.StdinData)
+	if err != nil {
+		return err
+	}
+
+
+	if conf.NetConf.RawPrevResult == nil {
+		return fmt.Errorf("Required prevResult missing")
+	}
+
+	if err := version.ParsePrevResult(&conf.NetConf); err != nil {
+		return err
+	}
+
+	prevResult, err := current.NewResultFromResult(conf.PrevResult)
+	if err != nil {
+		return err
+	}
+
+	netns, err := ns.GetNS(args.Netns)
+	if err != nil {
+		return fmt.Errorf("failed to open netns %q: %v", args.Netns, err)
+	}
+
+	defer netns.Close()
+
+	var found = false
+
+	for _, item := range prevResult.Interfaces {
+		if args.IfName == item.Name {
+			found = true
+			err = netns.Do(func(hostNetns ns.NetNS) error {
+				iface, err2 := netlink.LinkByName(item.Name)
+				if err2 != nil {
+
+					return err2
+				}
+				if item.Mac != iface.Attrs().HardwareAddr.String() {
+					return fmt.Errorf("mac address mismatch")
+				}
+				return nil
+			})
+			break		}
+	}
+
+	if !found {
+		return fmt.Errorf("interface %s not found", args.IfName)
+	}
+
 	return nil
 }
